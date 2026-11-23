@@ -73,12 +73,17 @@ func (h *Handler) GetAlias(ctx context.Context, principal *models.Principal, ali
 	a, err := h.schemaManager.GetAlias(ctx, alias)
 	if err != nil {
 		if errors.Is(err, cschema.ErrAliasNotFound) {
-			return nil, fmt.Errorf("alias %s not found: %w", alias, ErrNotFound)
+			return nil, h.aliasNotFound(alias)
 		}
 		return nil, err
 	}
 
+	// The permission resource names the target, so the check must follow the
+	// lookup; a denial answers like a missing alias to hide that it exists.
 	if err := h.Authorizer.Authorize(ctx, principal, authorization.READ, authorization.Aliases(a.Class, a.Alias)...); err != nil {
+		if errors.As(err, &authzerrors.Forbidden{}) {
+			return nil, h.aliasNotFound(alias)
+		}
 		return nil, err
 	}
 
@@ -215,18 +220,30 @@ func (h *Handler) DeleteAlias(ctx context.Context, principal *models.Principal, 
 	a, err := h.schemaManager.GetAlias(ctx, aliasName)
 	if err != nil {
 		if errors.Is(err, cschema.ErrAliasNotFound) {
-			return fmt.Errorf("alias %s not found: %w", aliasName, ErrNotFound)
+			return h.aliasNotFound(aliasName)
 		}
 		return err
 	}
 
-	if err := h.Authorizer.Authorize(ctx, principal, authorization.DELETE, authorization.Aliases(a.Class, a.Alias)...); err != nil {
+	// A denial answers like a missing alias unless the caller may read it.
+	resources := authorization.Aliases(a.Class, a.Alias)
+	if err := h.Authorizer.Authorize(ctx, principal, authorization.DELETE, resources...); err != nil {
+		if !errors.As(err, &authzerrors.Forbidden{}) {
+			return err
+		}
+		readErr := h.Authorizer.AuthorizeSilent(ctx, principal, authorization.READ, resources...)
+		if errors.As(readErr, &authzerrors.Forbidden{}) {
+			return h.aliasNotFound(aliasName)
+		}
+		if readErr != nil {
+			return readErr
+		}
 		return err
 	}
 
 	if _, err := h.schemaManager.DeleteAlias(ctx, aliasName); err != nil {
 		if errors.Is(err, cschema.ErrAliasNotFound) {
-			return fmt.Errorf("alias %s not found: %w", aliasName, ErrNotFound)
+			return h.aliasNotFound(aliasName)
 		}
 		if errors.Is(err, cschema.ErrBadRequest) {
 			return fmt.Errorf("%w: %w", ErrValidation, err)
