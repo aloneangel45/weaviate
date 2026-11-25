@@ -50,7 +50,7 @@ func (t *Traverser) GetClass(ctx context.Context, principal *models.Principal,
 	}
 
 	// validate here, because filters can contain references that need to be authorized
-	if err := t.validateFilters(ctx, principal, params.Filters); err != nil {
+	if err := t.validateFilters(ctx, principal, params.Filters, params.Tenant); err != nil {
 		return nil, errors.Wrap(err, "invalid 'where' filter")
 	}
 
@@ -103,18 +103,27 @@ func (t *Traverser) probeForRefDepthLimit(props search.SelectProperties) error {
 	return nil
 }
 
-func (t *Traverser) validateFilters(ctx context.Context, principal *models.Principal, filter *filters.LocalFilter) error {
+func (t *Traverser) validateFilters(ctx context.Context, principal *models.Principal,
+	filter *filters.LocalFilter, tenant string,
+) error {
 	if filter == nil {
 		return nil
 	}
 
+	authorizedClasses := map[string]*models.Class{}
 	f := func(name string) (*models.Class, error) {
-		err := t.authorizer.Authorize(ctx, principal, authorization.READ, authorization.CollectionsMetadata(name)...)
+		if class, ok := authorizedClasses[name]; ok {
+			return class, nil
+		}
+		// an empty tenant makes this the same resource as CollectionsData
+		err := t.authorizer.Authorize(ctx, principal, authorization.READ, authorization.ShardsData(name, tenant)...)
 		if err != nil {
 			return nil, err
 		}
 
-		return t.schemaGetter.ReadOnlyClass(name), nil
+		class := t.schemaGetter.ReadOnlyClass(name)
+		authorizedClasses[name] = class
+		return class, nil
 	}
 
 	return filters.ValidateFilters(f, filter)
