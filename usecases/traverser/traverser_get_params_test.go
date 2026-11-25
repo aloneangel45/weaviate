@@ -756,6 +756,13 @@ func TestTraverserFilterAuthorization(t *testing.T) {
 			Class: "Article",
 			Properties: []*models.Property{
 				{Name: "title", DataType: schema.DataTypeText.PropString()},
+				{Name: "author", DataType: []string{"Author"}},
+			},
+		},
+		{
+			Class: "Author",
+			Properties: []*models.Property{
+				{Name: "name", DataType: schema.DataTypeText.PropString()},
 			},
 		},
 	}}}
@@ -768,6 +775,10 @@ func TestTraverserFilterAuthorization(t *testing.T) {
 		}
 	}
 	onTitle := textClause(&filters.Path{Class: "Article", Property: "title"})
+	onAuthorID := textClause(&filters.Path{
+		Class: "Article", Property: "author",
+		Child: &filters.Path{Class: "Author", Property: filters.InternalPropID},
+	})
 	onMissingClass := textClause(&filters.Path{Class: "Missing", Property: "title"})
 	titleTwice := filters.Clause{
 		Operator: filters.OperatorAnd,
@@ -817,6 +828,17 @@ func TestTraverserFilterAuthorization(t *testing.T) {
 			expectResources: [][]string{
 				authorization.ShardsData("Article", "tenant1"),
 				authorization.ShardsData("Article", "tenant1"),
+			},
+			expectErr: "forbidden",
+		},
+		{
+			name:   "denied behind a reference",
+			clause: &onAuthorID,
+			tenant: "tenant1",
+			deny:   authorization.Objects("Author", "tenant1"),
+			expectResources: [][]string{
+				authorization.ShardsData("Article", "tenant1"),
+				authorization.ShardsData("Author", "tenant1"),
 			},
 			expectErr: "forbidden",
 		},
